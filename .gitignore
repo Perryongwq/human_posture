@@ -1,0 +1,42 @@
+# ── All images, anywhere — recorded frames + analysis renders, never in git ──
+# (App assets like logo.png live in vue/frontend, a separate repo, so this is safe here.)
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.webp
+*.tif
+*.tiff
+*.ico
+*.svg
+
+# ── Recorded test data + analysis output dirs ──
+images/
+video/
+*.mp4
+openpose/out/
+openpose/ring_out/
+openpose/ring_letters/
+openpose/ring_smoke/
+openpose/rotation_out/
+openpose/calib_out/
+openpose/*.log
+
+
+# ── Python / Node ──
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+.pytest_cache/
+node_modules/
+dist/
+
+# ── Local tool state ──
+.claude/settings.local.json
+
+# ── Working docs — kept local, not committed ──
+goal.md
+goal-history.md
+method.md
