@@ -1,0 +1,81 @@
+variables:
+  # to disable SSL verification due to self sign cert
+  GIT_SSL_NO_VERIFY: "1"
+  GIT_STRATEGY: fetch
+  GIT_DEPTH: 3
+  GIT_FETCH_EXTRA_FLAGS: --tags
+  SCRIPTS_REPO: https://${GITLAB_USER_NAME}:${GITLAB_ACCESS}@10.50.0.31:58080/system_scripts/semversion
+  # APIKEYS_REPO: https://${GITLAB_USER_NAME}:${GITLAB_ACCESS}@10.50.0.31:58080/mesapps/common/client_access_keys
+  # CLIENT_REPO: https://${GITLAB_USER_NAME}:${GITLAB_ACCESS}@10.50.0.31:58080/mesapps/common_library/binary/oracle_client/oracle19_25
+  # AMQP_REPO: https://${GITLAB_USER_NAME}:${GITLAB_ACCESS}@10.50.0.31:58080/mesapps/common_library/python/amqpconnection
+  # ORACLEDB_REPO: https://${GITLAB_USER_NAME}:${GITLAB_ACCESS}@10.50.0.31:58080/mesapps/common_library/python/appsoracledb
+  # AMQP_LOGGER: https://${GITLAB_USER_NAME}:${GITLAB_ACCESS}@10.50.0.31:58080/mesapps/common_library/python/amqp_logging2
+  # UTIL_REPO: https://${GITLAB_USER_NAME}:${GITLAB_ACCESS}@10.50.0.31:58080/mesapps/common_library/python/utilfunc
+
+cache:
+  key: ${CI_COMMIT_REF_SLUG}
+
+stages:
+  - version
+  - build
+
+before_script:
+  - git config --global user.name "${GITLAB_USER_NAME}"
+  - git config --global user.email "${GITLAB_USER_EMAIL}"
+  - export SCRIPTS_DIR=$(mktemp -d)
+  # - export APIKEYS_DIR=$(mktemp -d)
+  # - export CLIENT_DIR=$(mktemp -d)
+  # - export AMQP_DIR=$(mktemp -d)
+  # - export ORACLEDB_DIR=$(mktemp -d)
+  # - export AMQP_LOGDIR=$(mktemp -d)
+  # - export UTIL_DIR=$(mktemp -d)
+  - git clone -q --depth 1 "$SCRIPTS_REPO" "$SCRIPTS_DIR"
+# - git clone -q --depth 1 "$APIKEYS_REPO" "$APIKEYS_DIR"
+# - git clone -q --depth 1 "$CLIENT_REPO" "$CLIENT_DIR"
+# - git clone -q --depth 1 "$AMQP_REPO" "$AMQP_DIR"
+# - git clone -q --depth 1 "$ORACLEDB_REPO" "$ORACLEDB_DIR"
+# - git clone -q --depth 1 "$AMQP_LOGGER" "$AMQP_LOGDIR"
+# - git clone -q --depth 1 "$UTIL_REPO" "$UTIL_DIR"
+
+version:
+  stage: version
+  script:
+    - git log -1 > gitlogs
+    - cat gitlogs
+    - python3.12 $SCRIPTS_DIR/version-update.py `pwd` >> Changeslog.md
+    - git add Changelogs.md
+    - git commit -m "Update Changelogs $(date +"%D %T") [ci skip]"
+    - git remote set-url --push origin "${CI_REPOSITORY_URL#*@}"
+    - git push "https://${GITLAB_USER_NAME}:${GITLAB_ACCESS}@${CI_REPOSITORY_URL#*@}" "HEAD:master"
+    - ls -al
+  only:
+    - master
+
+build:
+  stage: build
+  script:
+    - ls -al
+    # - cp $APIKEYS_DIR/conf/apikey.json conf/apikey.json
+    # - mv conf/pikacfg.json-production conf/pikacfg.json
+    # - mv conf/maincfg.json-production conf/maincfg.json
+    # - cp $AMQP_DIR/amqpconnection.py .
+    # - cp $AMQP_LOGDIR/conf/amqp_log_conf.json conf/amqp_log_conf.json
+    # - cp $AMQP_LOGDIR/amqp_logger2.py .
+    # - mv $UTIL_DIR/util .
+    - docker build --tag $registrysvr/mesapps/common/sp5100k8s03/common/vue_testing/sp5100k8s03/backend:latest .
+    - docker login $registrysvr -u $registries_user -p $registries_passwd
+    - docker push $registrysvr/mesapps/common/sp5100k8s03/common/vue_testing/sp5100k8s03/backend:latest
+    - docker logout $registrysvr
+    - rm -rf /tmp/tmp.*
+  only:
+    - master
+
+development_build:
+  stage: build
+  script:
+    - ls -al
+    - docker build --tag $testenv_registries2/mesapps/common/sp5100k8s03/common/vue_testing/sp5100k8s03/backend:latest .
+    - docker push $testenv_registries2/mesapps/common/sp5100k8s03/common/vue_testing/sp5100k8s03/backend:latest
+    - rm -rf /tmp/tmp.*
+  except:
+    - master

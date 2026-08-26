@@ -1,0 +1,45 @@
+variables:
+  # to disable SSL verification due to self sign cert
+  GIT_SSL_NO_VERIFY: "1"
+  GIT_STRATEGY: fetch
+  GIT_DEPTH: 3
+  GIT_FETCH_EXTRA_FLAGS: --tags
+  SCRIPTS_REPO: https://${GITLAB_USER_NAME}:${GITLAB_ACCESS}@10.50.0.31:58080/system_scripts/semversion
+
+cache:
+  key: ${CI_COMMIT_REF_SLUG}
+
+stages:
+  - version
+  - build
+
+before_script:
+  - git config --global user.name "${GITLAB_USER_NAME}"
+  - git config --global user.email "${GITLAB_USER_EMAIL}"
+  - export SCRIPTS_DIR=$(mktemp -d)
+  - git clone -q --depth 1 "$SCRIPTS_REPO" "$SCRIPTS_DIR"
+
+version:
+  stage: version
+  script:
+    - git log -1 > gitlogs
+    - cat gitlogs
+    - python3.11 $SCRIPTS_DIR/version-update.py `pwd` >> Changeslog.md
+    - git add Changelogs.md
+    - git commit -m "Update Changelogs $(date +"%D %T") [ci skip]"
+    - git remote set-url --push origin "${CI_REPOSITORY_URL#*@}"
+    - git push "https://${GITLAB_USER_NAME}:${GITLAB_ACCESS}@${CI_REPOSITORY_URL#*@}" "HEAD:master"
+    - ls -al
+  only:
+    - master
+
+build:
+  stage: build
+  script:
+    - docker build --tag $registrysvr/mesapps/common/sp5100k8s03/common/vue_testing/sp5100k8s03/frontend .
+    - docker login $registrysvr -u $registries_user -p $registries_passwd
+    - docker push $registrysvr/mesapps/common/sp5100k8s03/common/vue_testing/sp5100k8s03/frontend
+    - docker logout $registrysvr
+    - rm -rf /tmp/tmp.*
+  only:
+    - master

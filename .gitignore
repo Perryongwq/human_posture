@@ -40,3 +40,15 @@ dist/
 goal.md
 goal-history.md
 method.md
+
+# ── Nested vue app: secrets, local config, runtime data — never commit ──
+.git.disabled/
+**/.env
+vue/backend/conf/maincfg.json
+vue/backend/conf/mcpkey.json
+vue/backend/data/
+*.log
+
+# App image assets the frontend needs (exempt from the global image ignore above)
+!vue/frontend/public/logo.png
+!vue/frontend/public/murata.ico
