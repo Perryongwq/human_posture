@@ -56,3 +56,45 @@ describe('carryLetters', () => {
     expect(carryLetters(cal(0), r)).toBeNull()
   })
 })
+
+import { bestVote, stationOffset, snapCal } from './liveRing.js'
+
+describe('slip re-anchor', () => {
+  // 10 tags labelled A..J on positions; simulate the overlay one station AHEAD
+  // of the stamps (displayed = stamp + 1), which is the observed failure.
+  const L = 'ABCDEFGHIJ'
+  const shift = (ch, k) => L[(L.indexOf(ch) + k + 10) % 10]
+
+  it('bestVote takes the majority, ignores ?', () => {
+    expect(bestVote(['H', '?', 'H', 'I'])).toBe('H')
+    expect(bestVote(['?', '?'])).toBe('?')
+  })
+
+  it('detects a +1 station slip from a few noisy reads', () => {
+    // displayed is +1 ahead; the true stamp (what the VLM reads) is displayed-1
+    const samples = ['B', 'D', 'F', 'H', 'J'].map(d => ({
+      displayed: d, votes: [shift(d, -1), '?', shift(d, -1), 'X'],   // one garbage vote
+    }))
+    const { n, margin } = stationOffset(samples, 10)
+    expect(n).toBe(1)
+    expect(margin).toBeGreaterThanOrEqual(2)
+  })
+
+  it('reports n=0 when aligned (no false snap)', () => {
+    const samples = ['A', 'C', 'E'].map(d => ({ displayed: d, votes: [d, d] }))
+    expect(stationOffset(samples, 10).n).toBe(0)
+  })
+
+  it('snapCal corrects a +1 slip so every label lands on its stamp', () => {
+    const cal = { hub: {}, radius: 1, tags: [...L].map((letter, i) => ({ x: i, y: 0, letter })) }
+    // slip the labels +1 (what the tracker did), then snap back by n=1
+    const slipped = { ...cal, tags: cal.tags.map((t, i) => ({ ...t, letter: L[(i + 1) % 10] })) }
+    const fixed = snapCal(slipped, 1, 10)
+    expect(fixed.tags.map(t => t.letter).join('')).toBe(L)
+  })
+
+  it('snapCal is a no-op for n=0', () => {
+    const cal = { tags: [{ letter: 'A' }] }
+    expect(snapCal(cal, 0)).toBe(cal)
+  })
+})

@@ -31,7 +31,7 @@ import {
 } from '@/components/ui/table'
 import { apiClient } from '@/api/client.js'
 import { stationOf } from '@/lib/carousel.js'
-import { carryLetters } from '@/lib/liveRing.js'
+import { carryLetters, estimateRotation, stationOffset, snapCal } from '@/lib/liveRing.js'
 
 const STATIONS = [...'ABCDEFGHIJ']
 const WRISTS = [15, 16]                                        // MediaPipe Pose wrist landmarks
@@ -322,22 +322,54 @@ function clearCalibration() {
 }
 
 // ── runtime ring: re-detect from the image, carry the letters over ──
+const SETTLE_MS = 1500          // motion must stop this long before a re-anchor
+const ANCHOR_TAGS = 5           // tags re-read to detect a station slip
 let ringTimer = 0, ringBusy = false
+let movedSinceAnchor = false, lastMoveAt = 0, anchoring = false
 async function ringTick() {
-  if (liveCal && lastSource && !ringBusy) {
+  if (liveCal && lastSource && !ringBusy && !anchoring) {
     ringBusy = true
     try {
       const { data } = await apiClient.post('/posture/ring', {
         image: frameToBase64(lastSource, 960, 0.8), stations: STATIONS.length,
         hub: cal.value.hub, radius: cal.value.radius,   // lock geometry: track rotation only
       })
-      const carried = carryLetters(liveCal, data, aspectOf(lastSource))
-      if (carried) { liveCal = carried; ringState.value = 'live' }
-      else ringState.value = 'searching'      // too few tags visible this frame: hold, don't guess
+      const aspect = aspectOf(lastSource)
+      // ponytail: deg is also computed inside carryLetters; one extra median over
+      // 10 numbers is nothing, and it keeps carryLetters' return type simple.
+      const { deg } = estimateRotation(liveCal, data, aspect)
+      const carried = carryLetters(liveCal, data, aspect)
+      if (carried) {
+        liveCal = carried; ringState.value = 'live'
+        if (Math.abs(deg) > 1) { movedSinceAnchor = true; lastMoveAt = Date.now() }
+        else if (movedSinceAnchor && Date.now() - lastMoveAt > SETTLE_MS) reAnchor()
+      } else ringState.value = 'searching'   // too few tags visible: hold, don't guess
     } catch { ringState.value = 'stale' }
     ringBusy = false
   }
   ringTimer = setTimeout(ringTick, RING_MS)
+}
+
+// One VLM pass after the carousel settles: if the letters slipped a whole
+// number of stations (10-fold aliasing), snap them back. Not continuous.
+async function reAnchor() {
+  anchoring = true; movedSinceAnchor = false; ringState.value = 'anchoring'
+  try {
+    const tags = liveCal.tags, stepN = Math.max(1, Math.floor(tags.length / ANCHOR_TAGS))
+    const samples = []
+    for (let i = 0; i < tags.length && samples.length < ANCHOR_TAGS; i += stepN) {
+      const t = tags[i]
+      const { data } = await apiClient.post('/posture/read-tag',
+        { image: frameToBase64(lastSource, 1920), x: t.x, y: t.y })
+      samples.push({ displayed: t.letter, votes: data.votes })
+    }
+    const { n, margin } = stationOffset(samples, tags.length)
+    if (n !== 0 && margin >= 2) {           // clear majority only, else leave it
+      liveCal = snapCal(liveCal, n, tags.length)
+      activeStation.value = null
+    }
+  } catch { /* Ollama busy/down — try again next settle */ }
+  anchoring = false; ringState.value = 'live'
 }
 
 // ── per-frame detection ─────────────────────────────────────────────
