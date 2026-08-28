@@ -324,10 +324,14 @@ function clearCalibration() {
 // ── runtime ring: re-detect from the image, carry the letters over ──
 const SETTLE_MS = 1500          // motion must stop this long before a re-anchor
 const ANCHOR_TAGS = 5           // tags re-read to detect a station slip
+const ANCHOR_COOLDOWN_MS = 30000 // a VLM pass takes 20-60 s; don't chain them back to back
 let ringTimer = 0, ringBusy = false
-let movedSinceAnchor = false, lastMoveAt = 0, anchoring = false
+let movedSinceAnchor = false, lastMoveAt = 0, anchoring = false, lastAnchorAt = 0
 async function ringTick() {
-  if (liveCal && lastSource && !ringBusy && !anchoring) {
+  // Tracking keeps running DURING an anchor: the VLM pass takes 20-60 s and
+  // pausing the tick for that long lets the carousel turn > half a wedge between
+  // ticks, which aliases the letters one whole station (issue video 2026-08-28).
+  if (liveCal && lastSource && !ringBusy) {
     ringBusy = true
     try {
       const { data } = await apiClient.post('/posture/ring', {
@@ -342,7 +346,8 @@ async function ringTick() {
       if (carried) {
         liveCal = carried; ringState.value = 'live'
         if (Math.abs(deg) > 1) { movedSinceAnchor = true; lastMoveAt = Date.now() }
-        else if (movedSinceAnchor && Date.now() - lastMoveAt > SETTLE_MS) reAnchor()
+        else if (movedSinceAnchor && !anchoring && Date.now() - lastMoveAt > SETTLE_MS
+                 && Date.now() - lastAnchorAt > ANCHOR_COOLDOWN_MS) reAnchor()
       } else ringState.value = 'searching'   // too few tags visible: hold, don't guess
     } catch { ringState.value = 'stale' }
     ringBusy = false
@@ -353,23 +358,35 @@ async function ringTick() {
 // One VLM pass after the carousel settles: if the letters slipped a whole
 // number of stations (10-fold aliasing), snap them back. Not continuous.
 async function reAnchor() {
-  anchoring = true; movedSinceAnchor = false; ringState.value = 'anchoring'
+  anchoring = true; movedSinceAnchor = false; lastAnchorAt = Date.now()
+  const prevState = ringState.value; ringState.value = 'anchoring'
   try {
+    // ONE snapshot: frame and tag positions from the same instant. The reads take
+    // seconds each; grabbing a fresh frame per read against positions frozen at
+    // anchor start crops the wrong spot as soon as the ring moves.
+    const image = frameToBase64(lastSource, 1920)
     const tags = liveCal.tags, stepN = Math.max(1, Math.floor(tags.length / ANCHOR_TAGS))
     const samples = []
     for (let i = 0; i < tags.length && samples.length < ANCHOR_TAGS; i += stepN) {
       const t = tags[i]
-      const { data } = await apiClient.post('/posture/read-tag',
-        { image: frameToBase64(lastSource, 1920), x: t.x, y: t.y })
+      const { data } = await apiClient.post('/posture/read-tag', { image, x: t.x, y: t.y })
       samples.push({ displayed: t.letter, votes: data.votes })
     }
     const { n, margin } = stationOffset(samples, tags.length)
-    if (n !== 0 && margin >= 2) {           // clear majority only, else leave it
-      liveCal = snapCal(liveCal, n, tags.length)
-      activeStation.value = null
-    }
+    // Apply only on a clear majority AND if the ring held still for the whole pass:
+    // the offset was measured against the snapshot; after a move it no longer applies.
+    if (n !== 0 && margin >= 2 && !movedSinceAnchor) shiftLetters(-n)
   } catch { /* Ollama busy/down — try again next settle */ }
-  anchoring = false; ringState.value = 'live'
+  anchoring = false; ringState.value = prevState === 'anchoring' ? 'live' : prevState
+}
+
+/** Manual slip correction: rotate the letters by `n` stations, geometry untouched.
+ *  The ring is 10-fold symmetric, so a slipped label set is geometrically perfect
+ *  and only the stamps (or the operator) can tell -- one tap beats a 30 s VLM pass. */
+function shiftLetters(n) {
+  if (!liveCal) return
+  liveCal = snapCal(liveCal, -n, liveCal.tags.length)
+  activeStation.value = null
 }
 
 // ── per-frame detection ─────────────────────────────────────────────
@@ -535,6 +552,10 @@ onBeforeUnmount(() => {
         {{ calState === 'busy' ? 'Calibrating…' : 'Calibrate (ring + letters)' }}
       </Button>
       <Button v-if="calibrated" variant="ghost" size="sm" @click="clearCalibration">Clear</Button>
+      <Button v-if="calibrated" variant="ghost" size="sm" title="Letters one station behind the stamps? Shift them forward"
+              @click="shiftLetters(1)">Letters +1</Button>
+      <Button v-if="calibrated" variant="ghost" size="sm" title="Letters one station ahead of the stamps? Shift them back"
+              @click="shiftLetters(-1)">Letters −1</Button>
 
       <Button v-if="!sessionActive" variant="primary" :disabled="!calibrated" @click="startSession">
         Start Session
