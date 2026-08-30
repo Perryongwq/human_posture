@@ -32,6 +32,13 @@ export default defineConfig(({ mode }) => ({
       // 127.0.0.1, not localhost: Docker/WSL listen on ::1:8010 here, so
       // "localhost" can resolve to them instead of uvicorn.
       '/api': 'http://127.0.0.1:8011',
+      // /ollama → local Ollama, so another PC can reach it via the already
+      // LAN-open :5175 — no firewall rule, Ollama stays bound to 127.0.0.1.
+      '/ollama': {
+        target: 'http://127.0.0.1:11434',
+        changeOrigin: true,
+        rewrite: p => p.replace(/^\/ollama/, ''),
+      },
     },
   },
 

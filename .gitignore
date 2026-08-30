@@ -52,3 +52,4 @@ vue/backend/data/
 # App image assets the frontend needs (exempt from the global image ignore above)
 !vue/frontend/public/logo.png
 !vue/frontend/public/murata.ico
+grep.exe.stackdump
